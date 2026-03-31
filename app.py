@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timedelta
 import zipfile
 import os
+import io
 
 st.title("Sistema de Procesamiento de Asistencias")
 
@@ -50,6 +51,85 @@ def texto_a_timedelta(texto):
 
     except:
         return timedelta()
+    
+# -------------------------------------------------
+# BORRAR DATOS SIN HORAS (🔥)
+# -------------------------------------------------
+
+def limpiar_bloques_sin_horas(df):
+
+    pattern = re.compile(r"\d{1,2}:\d{2}")
+    dias_validos = ["lunes","martes","miercoles","jueves","viernes","sabado","domingo"]
+
+    resultado = []
+    i = 0
+
+    while i < len(df):
+
+        fila = df.iloc[i]
+        fila_texto = " ".join(str(x).lower() for x in fila)
+
+        # 🔹 mantener filas de días
+        if any(dia in fila_texto for dia in dias_validos):
+            resultado.append(list(fila))
+            i += 1
+            continue
+
+        # 🔹 mantener filas de fechas
+        nums = 0
+        for x in fila:
+            try:
+                num = int(float(x))
+                if 1 <= num <= 31:
+                    nums += 1
+            except:
+                pass
+
+        if nums >= 3:
+            resultado.append(list(fila))
+            i += 1
+            continue
+
+        # 🔥 detectar inicio de bloque (Nombre / ID)
+        if any("nombre" in str(x).lower() or "id" in str(x).lower() for x in fila):
+
+            bloque = [list(fila)]
+            i += 1
+
+            tiene_horas = False
+
+            # recorrer bloque completo
+            while i < len(df):
+
+                fila_bloque = df.iloc[i]
+                texto_bloque = " ".join(str(x).lower() for x in fila_bloque)
+
+                # si encontramos otro encabezado → termina bloque
+                if any("nombre" in str(x).lower() or "id" in str(x).lower() for x in fila_bloque):
+                    break
+
+                # si encontramos días → termina bloque
+                if any(dia in texto_bloque for dia in dias_validos):
+                    break
+
+                # verificar si hay horas
+                if any(pattern.search(str(x)) for x in fila_bloque):
+                    tiene_horas = True
+
+                bloque.append(list(fila_bloque))
+                i += 1
+
+            # 🔥 SOLO guardar si tiene horas
+            if tiene_horas:
+                resultado.extend(bloque)
+
+            continue
+
+        # 🔹 otras filas (por seguridad)
+        resultado.append(list(fila))
+        i += 1
+
+    return pd.DataFrame(resultado)
 
 
 # -------------------------------------------------
@@ -301,6 +381,9 @@ def procesar_excel(archivo):
 
     df_final = pd.DataFrame(resultado)
 
+    # 🔥 LIMPIAR antes de calcular
+    df_final = limpiar_bloques_sin_horas(df_final)
+
     return calcular_horas(df_final, es_cedis)
 
 
@@ -318,35 +401,37 @@ if archivos:
 
     if st.button("Procesar archivos"):
 
-        carpeta = "resultados"
-
-        if not os.path.exists(carpeta):
-            os.makedirs(carpeta)
-
-        archivos_generados = []
+        tablas = []
 
         for archivo in archivos:
 
             df_final = procesar_excel(archivo)
 
-            nombre_salida = f"{carpeta}/{archivo.name}_procesado.xlsx"
+            separador = pd.DataFrame([[f"===== {archivo.name} ====="]])
 
-            df_final.to_excel(nombre_salida, index=False, header=False)
+            tablas.append(separador)
+            tablas.append(df_final)
+            tablas.append(pd.DataFrame([[""]]))
 
-            archivos_generados.append(nombre_salida)
+        df_unido = pd.concat(tablas, ignore_index=True)
 
-        zip_nombre = "reportes_procesados.zip"
+        # 🔥 crear excel en memoria
+        excel_buffer = io.BytesIO()
+        df_unido.to_excel(excel_buffer, index=False, header=False)
+        excel_buffer.seek(0)
 
-        with zipfile.ZipFile(zip_nombre,"w") as zipf:
-            for archivo in archivos_generados:
-                zipf.write(archivo)
+        # 🔥 ahora crear ZIP
+        zip_buffer = io.BytesIO()
 
-        st.success("Archivos procesados correctamente")
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+            zipf.writestr("reporte_unificado.xlsx", excel_buffer.read())
 
-        with open(zip_nombre,"rb") as f:
+        zip_buffer.seek(0)
 
-            st.download_button(
-                "Descargar todos los reportes",
-                f,
-                file_name="reportes_procesados.zip"
-            )
+        st.success("Archivo ZIP generado correctamente")
+
+        st.download_button(
+            "Descargar ZIP con Excel",
+            zip_buffer.getvalue(),
+            file_name="reporte_unificado.zip"
+        )
