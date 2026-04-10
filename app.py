@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import re
@@ -52,9 +51,76 @@ def texto_a_timedelta(texto):
 
     except:
         return timedelta()
-    
+
 # -------------------------------------------------
-# BORRAR DATOS SIN HORAS (🔥)
+# RECORTAR COLUMNAS
+# -------------------------------------------------
+
+def recortar_columnas_despues_ultimo_dia(df):
+
+    pattern_hora = re.compile(r"\d{1,2}:\d{2}")
+    ultima_col_valida = 0
+
+    for col in range(df.shape[1]):
+
+        valores = df[col]
+        tiene_dia = False
+
+        for val in valores:
+            try:
+                num = int(float(val))
+                if 1 <= num <= 31:
+                    tiene_dia = True
+                    break
+            except:
+                pass
+
+        if tiene_dia:
+            ultima_col_valida = col
+
+    columnas_a_conservar = ultima_col_valida + 1
+
+    for col in range(ultima_col_valida + 1, df.shape[1]):
+
+        col_vals = df[col].astype(str)
+
+        if col_vals.str.contains(pattern_hora).any():
+            columnas_a_conservar = col + 1
+
+    return df.iloc[:, :columnas_a_conservar]
+
+# -------------------------------------------------
+# 🔥 NUEVO: ELIMINAR FILAS DE FECHAS REPETIDAS
+# -------------------------------------------------
+
+def eliminar_filas_fechas_repetidas(df):
+
+    resultado = []
+    fila_fecha_encontrada = False
+
+    for _, row in df.iterrows():
+
+        nums = 0
+
+        for x in row:
+            try:
+                num = int(float(x))
+                if 1 <= num <= 31:
+                    nums += 1
+            except:
+                pass
+
+        if nums >= 5:
+            if not fila_fecha_encontrada:
+                resultado.append(list(row))
+                fila_fecha_encontrada = True
+        else:
+            resultado.append(list(row))
+
+    return pd.DataFrame(resultado)
+
+# -------------------------------------------------
+# LIMPIAR BLOQUES
 # -------------------------------------------------
 
 def limpiar_bloques_sin_horas(df):
@@ -70,13 +136,11 @@ def limpiar_bloques_sin_horas(df):
         fila = df.iloc[i]
         fila_texto = " ".join(str(x).lower() for x in fila)
 
-        # 🔹 mantener filas de días
         if any(dia in fila_texto for dia in dias_validos):
             resultado.append(list(fila))
             i += 1
             continue
 
-        # 🔹 mantener filas de fechas
         nums = 0
         for x in fila:
             try:
@@ -91,50 +155,41 @@ def limpiar_bloques_sin_horas(df):
             i += 1
             continue
 
-        # 🔥 detectar inicio de bloque (Nombre / ID)
         if any("nombre" in str(x).lower() or "id" in str(x).lower() for x in fila):
 
             bloque = [list(fila)]
             i += 1
-
             tiene_horas = False
 
-            # recorrer bloque completo
             while i < len(df):
 
                 fila_bloque = df.iloc[i]
                 texto_bloque = " ".join(str(x).lower() for x in fila_bloque)
 
-                # si encontramos otro encabezado → termina bloque
                 if any("nombre" in str(x).lower() or "id" in str(x).lower() for x in fila_bloque):
                     break
 
-                # si encontramos días → termina bloque
                 if any(dia in texto_bloque for dia in dias_validos):
                     break
 
-                # verificar si hay horas
                 if any(pattern.search(str(x)) for x in fila_bloque):
                     tiene_horas = True
 
                 bloque.append(list(fila_bloque))
                 i += 1
 
-            # 🔥 SOLO guardar si tiene horas
             if tiene_horas:
                 resultado.extend(bloque)
 
             continue
 
-        # 🔹 otras filas (por seguridad)
         resultado.append(list(fila))
         i += 1
 
     return pd.DataFrame(resultado)
 
-
 # -------------------------------------------------
-# CALCULAR HORAS (CON CEDIS 🔥)
+# CALCULAR HORAS
 # -------------------------------------------------
 
 def calcular_horas(df, es_cedis=False):
@@ -145,15 +200,13 @@ def calcular_horas(df, es_cedis=False):
     i = 0
     fila_dias_actual = None
 
-    total_cols = len(df.columns) + 1  # 🔥 columna extra fija
-
+    total_cols = len(df.columns) + 1
     dias_validos = ["lunes","martes","miercoles","jueves","viernes","sabado","domingo"]
 
     while i < len(df):
 
         fila = df.iloc[i]
 
-        # 🔥 detectar fila de días
         if any(str(x).strip().lower() in dias_validos for x in fila):
 
             conteo = sum(str(x).strip().lower() in dias_validos for x in fila)
@@ -168,7 +221,6 @@ def calcular_horas(df, es_cedis=False):
                 i += 1
                 continue
 
-        # encabezado
         if any("Nombre" in str(x) or "ID" in str(x) for x in fila):
 
             fila_lista = list(fila)
@@ -222,21 +274,15 @@ def calcular_horas(df, es_cedis=False):
 
                 horas = horas_por_columna[col]
 
-                # 🔥 SOLO procesar si hay datos reales
                 if len(horas) < 2:
                     continue
 
-                # detectar domingo
                 if fila_dias_actual and col < len(fila_dias_actual):
                     es_domingo = str(fila_dias_actual[col]).strip().lower() == "domingo"
                 else:
                     es_domingo = False
 
-                # regla CEDIS
-                if es_domingo:
-                    jornada_base = timedelta(hours=9 if es_cedis else 8)
-                else:
-                    jornada_base = timedelta(hours=9)
+                jornada_base = timedelta(hours=9 if not es_domingo else (9 if es_cedis else 8))
 
                 trabajadas = horas[-1] - horas[0]
                 diferencia = jornada_base - trabajadas
@@ -245,7 +291,6 @@ def calcular_horas(df, es_cedis=False):
                 fila_jornada[col] = formatear_tiempo(jornada_base)
                 fila_diferencia[col] = formatear_tiempo(diferencia)
 
-            # 🔥 suma diferencias (solo donde hay datos reales)
             suma_diferencias = timedelta()
 
             for val in fila_diferencia:
@@ -266,7 +311,6 @@ def calcular_horas(df, es_cedis=False):
 
     return pd.DataFrame(resultado)
 
-
 # -------------------------------------------------
 # FUNCION PRINCIPAL
 # -------------------------------------------------
@@ -283,21 +327,16 @@ def procesar_excel(archivo):
     texto = df.astype(str).stack().str.cat(sep=" ")
     es_cedis = "CEDIS" in texto.upper()
 
-    # 🔥 GENERAR DÍAS DESDE FECHAS (VERSIÓN ROBUSTA)
     periodo = re.search(r"(\d{4})-(\d{2})-\d{2}", texto)
 
     if periodo:
+
         anio = int(periodo.group(1))
         mes = int(periodo.group(2))
 
         dias_es_num = {
-            0: "Lunes",
-            1: "Martes",
-            2: "Miercoles",
-            3: "Jueves",
-            4: "Viernes",
-            5: "Sabado",
-            6: "Domingo"
+            0: "Lunes",1: "Martes",2: "Miercoles",
+            3: "Jueves",4: "Viernes",5: "Sabado",6: "Domingo"
         }
 
         for i, row in df.iterrows():
@@ -312,7 +351,6 @@ def procesar_excel(archivo):
                 except:
                     pass
 
-            # 🔥 detectar fila de fechas REAL
             if len(valores_numericos) >= 5:
 
                 fila_dias = [""] * len(df.columns)
@@ -334,6 +372,11 @@ def procesar_excel(archivo):
 
                 break
 
+    df = recortar_columnas_despues_ultimo_dia(df)
+
+    # 🔥 NUEVO
+    df = eliminar_filas_fechas_repetidas(df)
+
     pattern = re.compile(r"\d{1,2}:\d{2}")
     hay_regex = df.astype(str).apply(lambda col: col.str.contains(pattern).any()).any()
 
@@ -341,23 +384,14 @@ def procesar_excel(archivo):
 
     for _, row in df.iterrows():
 
-        texto_fila = " ".join([str(x) for x in row])
-
-        # 🔥 NO romper fila de fechas (MEJORADO)
-        nums_detectados = 0
-        for x in row:
-            try:
-                num = int(float(x))
-                if 1 <= num <= 31:
-                    nums_detectados += 1
-            except:
-                pass
+        nums_detectados = sum(
+            1 for x in row if str(x).replace(".0","").isdigit() and 1 <= int(float(x)) <= 31
+        )
 
         if nums_detectados >= 3:
             resultado.append(list(row))
             continue
 
-        # 🔥 NO romper fila de días
         if any(str(x).strip().lower() in ["lunes","martes","miercoles","jueves","viernes","sabado","domingo"] for x in row):
             resultado.append(list(row))
             continue
@@ -381,12 +415,9 @@ def procesar_excel(archivo):
             resultado.append([c[i] if i < len(c) else "" for c in columnas])
 
     df_final = pd.DataFrame(resultado)
-
-    # 🔥 LIMPIAR antes de calcular
     df_final = limpiar_bloques_sin_horas(df_final)
 
     return calcular_horas(df_final, es_cedis)
-
 
 # -------------------------------------------------
 # SUBIR ARCHIVOS
@@ -416,12 +447,10 @@ if archivos:
 
         df_unido = pd.concat(tablas, ignore_index=True)
 
-        # 🔥 crear excel en memoria
         excel_buffer = io.BytesIO()
         df_unido.to_excel(excel_buffer, index=False, header=False)
         excel_buffer.seek(0)
 
-        # 🔥 ahora crear ZIP
         zip_buffer = io.BytesIO()
 
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
