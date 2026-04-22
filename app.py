@@ -90,7 +90,7 @@ def recortar_columnas_despues_ultimo_dia(df):
     return df.iloc[:, :columnas_a_conservar]
 
 # -------------------------------------------------
-# 🔥 NUEVO: ELIMINAR FILAS DE FECHAS REPETIDAS
+# ELIMINAR FILAS DE FECHAS REPETIDAS
 # -------------------------------------------------
 
 def eliminar_filas_fechas_repetidas(df):
@@ -355,12 +355,29 @@ def procesar_excel(archivo):
 
                 fila_dias = [""] * len(df.columns)
 
+                # 🔥 CORRECCIÓN AQUÍ
+                mes_actual = mes
+                anio_actual = anio
+                dia_anterior = None
+
                 for col, val in enumerate(row):
                     try:
                         num = int(float(val))
+
                         if 1 <= num <= 31:
-                            fecha = datetime(anio, mes, num)
+
+                            if dia_anterior is not None and num < dia_anterior:
+                                mes_actual += 1
+
+                                if mes_actual > 12:
+                                    mes_actual = 1
+                                    anio_actual += 1
+
+                            fecha = datetime(anio_actual, mes_actual, num)
                             fila_dias[col] = dias_es_num[fecha.weekday()]
+
+                            dia_anterior = num
+
                     except:
                         pass
 
@@ -373,8 +390,6 @@ def procesar_excel(archivo):
                 break
 
     df = recortar_columnas_despues_ultimo_dia(df)
-
-    # 🔥 NUEVO
     df = eliminar_filas_fechas_repetidas(df)
 
     pattern = re.compile(r"\d{1,2}:\d{2}")
