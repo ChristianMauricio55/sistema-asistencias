@@ -297,6 +297,9 @@ def calcular_horas(df, es_cedis=False):
                 if val != "":
                     suma_diferencias += texto_a_timedelta(val)
 
+            # 🔥 INVERSIÓN DE SIGNO SOLO EN EL TOTAL
+            suma_diferencias = -suma_diferencias
+
             fila_diferencia[-1] = formatear_tiempo(suma_diferencias)
 
             resultado.append(fila_trabajadas)
@@ -355,7 +358,6 @@ def procesar_excel(archivo):
 
                 fila_dias = [""] * len(df.columns)
 
-                # 🔥 CORRECCIÓN AQUÍ
                 mes_actual = mes
                 anio_actual = anio
                 dia_anterior = None
